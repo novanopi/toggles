@@ -13,12 +13,17 @@
 
         body {
             margin: 0;
-            height: 100vh;
+            min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
             background: #111;
+            color: white;
             font-family: Arial, sans-serif;
+        }
+
+        .container {
+            text-align: center;
         }
 
         .toggle {
@@ -29,6 +34,7 @@
             padding: 4px;
             cursor: pointer;
             transition: background 0.2s;
+            margin: 0 auto 24px;
         }
 
         .toggle::after {
@@ -48,10 +54,63 @@
         .toggle.on::after {
             transform: translateX(36px);
         }
+
+        button {
+            border: none;
+            border-radius: 8px;
+            padding: 10px 16px;
+            margin: 4px;
+            background: #333;
+            color: white;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #444;
+        }
+
+        .status {
+            color: #999;
+            font-size: 14px;
+            margin-bottom: 12px;
+        }
+
+        .panel {
+            display: none;
+            margin-top: 20px;
+        }
+
+        .panel.visible {
+            display: block;
+        }
+
+        input {
+            width: 220px;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #444;
+            background: #222;
+            color: white;
+            margin-bottom: 8px;
+        }
+
+        .error {
+            color: #ef4444;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+
+        .success {
+            color: #22c55e;
+            margin-top: 10px;
+            font-size: 14px;
+        }
     </style>
 </head>
 
 <body>
+
+<div class="container">
 
     <div
         id="toggle"
@@ -59,33 +118,336 @@
         onclick="toggleState()"
     ></div>
 
-    <script>
-        async function toggleState() {
-            const toggle = document.getElementById("toggle");
+    <div id="status" class="status">
+        {% if password_set %}
+            {% if authenticated %}
+                🔓 Unlocked
+            {% else %}
+                🔒 Locked
+            {% endif %}
+        {% else %}
+            No password
+        {% endif %}
+    </div>
 
-            const newState = !toggle.classList.contains("on");
+    <!-- No password -->
+    <div
+        id="setPasswordPanel"
+        class="panel {% if not password_set %}visible{% endif %}"
+    >
+        <div>
+            <input
+                id="newPassword"
+                type="password"
+                placeholder="Create password"
+            >
+        </div>
 
-            // Update the server/database
-            const response = await fetch("/toggle", {
+        <button onclick="setPassword()">
+            Set Password
+        </button>
+    </div>
+
+    <!-- Password required -->
+    <div
+        id="loginPanel"
+        class="panel {% if password_set and not authenticated %}visible{% endif %}"
+    >
+        <div>
+            <input
+                id="password"
+                type="password"
+                placeholder="Password"
+                onkeydown="handleEnter(event)"
+            >
+        </div>
+
+        <button onclick="login()">
+            Unlock
+        </button>
+    </div>
+
+    <!-- Authenticated -->
+    <div
+        id="managementPanel"
+        class="panel {% if password_set and authenticated %}visible{% endif %}"
+    >
+        <button onclick="removePassword()">
+            Remove Password
+        </button>
+
+        <button onclick="logout()">
+            Lock
+        </button>
+    </div>
+
+    <div id="message"></div>
+
+</div>
+
+<script>
+
+    const toggle = document.getElementById("toggle");
+    const statusElement = document.getElementById("status");
+
+    const setPasswordPanel =
+        document.getElementById("setPasswordPanel");
+
+    const loginPanel =
+        document.getElementById("loginPanel");
+
+    const managementPanel =
+        document.getElementById("managementPanel");
+
+    const message =
+        document.getElementById("message");
+
+
+    function showMessage(text, success = false) {
+        message.textContent = text;
+        message.className = success ? "success" : "error";
+    }
+
+
+    function clearMessage() {
+        message.textContent = "";
+        message.className = "";
+    }
+
+
+    function updateUI(data) {
+        const passwordSet = data.password_set;
+        const authenticated = data.authenticated;
+
+        setPasswordPanel.classList.toggle(
+            "visible",
+            !passwordSet
+        );
+
+        loginPanel.classList.toggle(
+            "visible",
+            passwordSet && !authenticated
+        );
+
+        managementPanel.classList.toggle(
+            "visible",
+            passwordSet && authenticated
+        );
+
+        if (!passwordSet) {
+            statusElement.textContent = "No password";
+        } else if (authenticated) {
+            statusElement.textContent = "🔓 Unlocked";
+        } else {
+            statusElement.textContent = "🔒 Locked";
+        }
+    }
+
+
+    async function toggleState() {
+
+        clearMessage();
+
+        const newState =
+            !toggle.classList.contains("on");
+
+        const response = await fetch("/toggle", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                enabled: newState
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.status === 401) {
+            showMessage("Enter the password to unlock the toggle.");
+
+            document
+                .getElementById("password")
+                .focus();
+
+            return;
+        }
+
+        if (!response.ok) {
+            showMessage(data.error || "Something went wrong.");
+            return;
+        }
+
+        toggle.classList.toggle(
+            "on",
+            data.enabled
+        );
+    }
+
+
+    async function setPassword() {
+
+        clearMessage();
+
+        const password =
+            document.getElementById("newPassword").value;
+
+        if (!password) {
+            showMessage("Enter a password.");
+            return;
+        }
+
+        const response = await fetch(
+            "/password/set",
+            {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"
                 },
                 body: JSON.stringify({
-                    enabled: newState
+                    password: password
                 })
-            });
-
-            if (!response.ok) {
-                return;
             }
+        );
 
-            const data = await response.json();
+        const data = await response.json();
 
-            // Update the UI
-            toggle.classList.toggle("on", data.enabled);
+        if (!response.ok) {
+            showMessage(data.error || "Could not set password.");
+            return;
         }
-    </script>
+
+        document.getElementById("newPassword").value = "";
+
+        updateUI(data);
+
+        showMessage(
+            "Password set. The toggle is now protected.",
+            true
+        );
+    }
+
+
+    async function login() {
+
+        clearMessage();
+
+        const password =
+            document.getElementById("password").value;
+
+        if (!password) {
+            showMessage("Enter the password.");
+            return;
+        }
+
+        const response = await fetch(
+            "/password/login",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    password: password
+                })
+            }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            showMessage(data.error || "Incorrect password.");
+            return;
+        }
+
+        document.getElementById("password").value = "";
+
+        updateUI({
+            password_set: true,
+            authenticated: true
+        });
+
+        showMessage(
+            "Unlocked.",
+            true
+        );
+    }
+
+
+    async function removePassword() {
+
+        clearMessage();
+
+        const confirmed = confirm(
+            "Remove the password? Anyone will be able to change the toggle."
+        );
+
+        if (!confirmed) {
+            return;
+        }
+
+        const response = await fetch(
+            "/password/remove",
+            {
+                method: "POST"
+            }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            showMessage(
+                data.error || "Could not remove password."
+            );
+            return;
+        }
+
+        updateUI(data);
+
+        showMessage(
+            "Password removed. Anyone can now change the toggle.",
+            true
+        );
+    }
+
+
+    async function logout() {
+
+        clearMessage();
+
+        const response = await fetch(
+            "/logout",
+            {
+                method: "POST"
+            }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            showMessage("Could not lock.");
+            return;
+        }
+
+        updateUI({
+            password_set: true,
+            authenticated: false
+        });
+
+        showMessage(
+            "Locked.",
+            true
+        );
+    }
+
+
+    function handleEnter(event) {
+        if (event.key === "Enter") {
+            login();
+        }
+    }
+
+</script>
 
 </body>
 </html>
