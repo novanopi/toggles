@@ -24,11 +24,26 @@
 
         .container {
             width: 100%;
-            max-width: 320px;
+            max-width: 360px;
             text-align: center;
         }
 
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            margin-bottom: 16px;
+        }
+
+        .toggle-label {
+            font-size: 16px;
+            color: white;
+            text-align: left;
+        }
+
         .toggle {
+            flex-shrink: 0;
             width: 80px;
             height: 44px;
             border-radius: 999px;
@@ -36,7 +51,6 @@
             padding: 4px;
             cursor: pointer;
             transition: background 0.2s;
-            margin: 0 auto 20px;
         }
 
         .toggle::after {
@@ -127,11 +141,33 @@
 
 <div class="container">
 
-    <div
-        id="toggle"
-        class="toggle {% if enabled %}on{% endif %}"
-        onclick="toggleState()"
-    ></div>
+    <!-- Force CtrlEm -->
+    <div class="toggle-row">
+        <div class="toggle-label">
+            Force CtrlEm
+        </div>
+
+        <div
+            id="forceCtrlEmToggle"
+            class="toggle {% if enabled %}on{% endif %}"
+            onclick="toggleForceCtrlEm()"
+        ></div>
+    </div>
+
+
+    <!-- Gag -->
+    <div class="toggle-row">
+        <div class="toggle-label">
+            Gag
+        </div>
+
+        <div
+            id="gagToggle"
+            class="toggle {% if gagged %}on{% endif %}"
+            onclick="toggleGag()"
+        ></div>
+    </div>
+
 
     <div id="status" class="status">
         {% if password_set %}
@@ -205,8 +241,8 @@
 
 <script>
 
-async function toggleState() {
-    const toggle = document.getElementById("toggle");
+async function toggleForceCtrlEm() {
+    const toggle = document.getElementById("forceCtrlEmToggle");
 
     const newState = !toggle.classList.contains("on");
 
@@ -231,7 +267,37 @@ async function toggleState() {
 
     const data = await response.json();
 
-    toggle.classList.toggle("on", data.enabled);
+    toggle.classList.toggle("on", data.is_forced_ctrlem);
+}
+
+
+async function toggleGag() {
+    const toggle = document.getElementById("gagToggle");
+
+    const newState = !toggle.classList.contains("on");
+
+    const response = await fetch("/gag", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            gagged: newState
+        })
+    });
+
+    if (response.status === 403) {
+        showUnlockPanel();
+        return;
+    }
+
+    if (!response.ok) {
+        return;
+    }
+
+    const data = await response.json();
+
+    toggle.classList.toggle("on", data.is_gagged);
 }
 
 
@@ -360,10 +426,12 @@ function updateUI(passwordSet, authenticated) {
     const status = document.getElementById("status");
 
     setPanel.classList.toggle("hidden", passwordSet);
+
     unlockPanel.classList.toggle(
         "hidden",
         !passwordSet || authenticated
     );
+
     managePanel.classList.toggle(
         "hidden",
         !passwordSet || !authenticated
