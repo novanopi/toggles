@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Toggle</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #111;
+            font-family: Arial, sans-serif;
+        }
+
+        .toggle {
+            width: 80px;
+            height: 44px;
+            border-radius: 999px;
+            background: #444;
+            padding: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .toggle::after {
+            content: "";
+            display: block;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: white;
+            transition: transform 0.2s;
+        }
+
+        .toggle.on {
+            background: #22c55e;
+        }
+
+        .toggle.on::after {
+            transform: translateX(36px);
+        }
+    </style>
+</head>
+
+<body>
+
+    <div
+        id="toggle"
+        class="toggle {% if enabled %}on{% endif %}"
+        onclick="toggleState()"
+    ></div>
+
+    <script>
+        async function toggleState() {
+            const toggle = document.getElementById("toggle");
+
+            const newState = !toggle.classList.contains("on");
+
+            // Update the server/database
+            const response = await fetch("/toggle", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    enabled: newState
+                })
+            });
+
+            if (!response.ok) {
+                return;
+            }
+
+            const data = await response.json();
+
+            // Update the UI
+            toggle.classList.toggle("on", data.enabled);
+        }
+    </script>
+
+</body>
+</html>
