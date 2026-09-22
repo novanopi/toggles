@@ -1,21 +1,13 @@
 from flask import Flask, render_template, request, jsonify, session
 import sqlite3
-import os
-import secrets
-import hashlib
-import hmac
 
 app = Flask(__name__)
 
 DATABASE = "toggle.db"
 
-# Set this in Render as an environment variable.
-# Example:
-# SESSION_SECRET=some-long-random-secret
-app.secret_key = os.environ.get("SESSION_SECRET")
-
-if not app.secret_key:
-    raise RuntimeError("SESSION_SECRET environment variable is required")
+# Used to sign the Flask session cookie.
+# Change this to any random string you want.
+app.secret_key = "change-this-to-a-random-secret-key"
 
 
 def init_db():
@@ -24,28 +16,24 @@ def init_db():
             CREATE TABLE IF NOT EXISTS settings (
                 id INTEGER PRIMARY KEY,
                 enabled INTEGER NOT NULL,
-                password_hash TEXT
+                password TEXT
             )
         """)
 
-        # Handle databases created by your old version,
-        # which don't have password_hash yet.
-        columns = conn.execute(
-            "PRAGMA table_info(settings)"
-        ).fetchall()
+        # Handle an existing database created by the old version.
+        columns = [
+            row[1]
+            for row in conn.execute("PRAGMA table_info(settings)").fetchall()
+        ]
 
-        column_names = [column[1] for column in columns]
-
-        if "password_hash" not in column_names:
+        if "password" not in columns:
             conn.execute(
-                "ALTER TABLE settings ADD COLUMN password_hash TEXT"
+                "ALTER TABLE settings ADD COLUMN password TEXT"
             )
 
         conn.execute("""
-            INSERT OR IGNORE INTO settings
-                (id, enabled, password_hash)
-            VALUES
-                (1, 0, NULL)
+            INSERT OR IGNORE INTO settings (id, enabled, password)
+            VALUES (1, 0, NULL)
         """)
 
         conn.commit()
@@ -54,99 +42,53 @@ def init_db():
 def get_settings():
     with sqlite3.connect(DATABASE) as conn:
         row = conn.execute("""
-            SELECT enabled, password_hash
+            SELECT enabled, password
             FROM settings
             WHERE id = 1
         """).fetchone()
 
         return {
             "enabled": bool(row[0]),
-            "password_hash": row[1]
+            "password": row[1]
         }
+
+
+def get_state():
+    return get_settings()["enabled"]
 
 
 def set_state(enabled):
     with sqlite3.connect(DATABASE) as conn:
-        conn.execute("""
-            UPDATE settings
-            SET enabled = ?
-            WHERE id = 1
-        """, (1 if enabled else 0,))
+        conn.execute(
+            "UPDATE settings SET enabled = ? WHERE id = 1",
+            (1 if enabled else 0,)
+        )
         conn.commit()
 
 
-def hash_password(password):
-    """
-    Hash the password using PBKDF2-HMAC-SHA256.
-    A random salt is stored alongside the hash.
-    """
-    salt = secrets.token_bytes(16)
-
-    password_hash = hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode("utf-8"),
-        salt,
-        600_000
-    )
-
-    return (
-        salt.hex()
-        + ":"
-        + password_hash.hex()
-    )
-
-
-def verify_password(password, stored_hash):
-    try:
-        salt_hex, hash_hex = stored_hash.split(":", 1)
-
-        salt = bytes.fromhex(salt_hex)
-        expected_hash = bytes.fromhex(hash_hex)
-
-        actual_hash = hashlib.pbkdf2_hmac(
-            "sha256",
-            password.encode("utf-8"),
-            salt,
-            600_000
-        )
-
-        return hmac.compare_digest(
-            actual_hash,
-            expected_hash
-        )
-
-    except (ValueError, TypeError):
-        return False
-
-
 def set_password(password):
-    password_hash = hash_password(password)
-
     with sqlite3.connect(DATABASE) as conn:
-        conn.execute("""
-            UPDATE settings
-            SET password_hash = ?
-            WHERE id = 1
-        """, (password_hash,))
+        conn.execute(
+            "UPDATE settings SET password = ? WHERE id = 1",
+            (password,)
+        )
         conn.commit()
 
 
 def remove_password():
     with sqlite3.connect(DATABASE) as conn:
-        conn.execute("""
-            UPDATE settings
-            SET password_hash = NULL
-            WHERE id = 1
-        """)
+        conn.execute(
+            "UPDATE settings SET password = NULL WHERE id = 1"
+        )
         conn.commit()
 
 
-def password_is_set():
-    return get_settings()["password_hash"] is not None
+def password_required():
+    return get_settings()["password"] is not None
 
 
 def is_authenticated():
-    return session.get("authenticated", False)
+    return session.get("toggle_authenticated", False)
 
 
 init_db()
@@ -159,30 +101,28 @@ def index():
     return render_template(
         "index.html",
         enabled=settings["enabled"],
-        password_set=settings["password_hash"] is not None,
+        password_set=settings["password"] is not None,
         authenticated=is_authenticated()
     )
 
 
 @app.route("/toggle", methods=["POST"])
 def toggle():
+    data = request.get_json() or {}
+
     settings = get_settings()
 
     # If a password exists, authentication is required.
-    if settings["password_hash"] is not None:
-        if not is_authenticated():
-            return jsonify({
-                "error": "Password required",
-                "requires_password": True
-            }), 401
-
-    data = request.get_json() or {}
+    if settings["password"] is not None and not is_authenticated():
+        return jsonify({
+            "error": "password_required"
+        }), 403
 
     enabled = bool(data.get("enabled", False))
     set_state(enabled)
 
     return jsonify({
-        "enabled": get_settings()["enabled"]
+        "enabled": get_state()
     })
 
 
@@ -192,36 +132,34 @@ def api_status():
 
     return jsonify({
         "is_on": settings["enabled"],
-        "password_set": settings["password_hash"] is not None,
+        "password_set": settings["password"] is not None,
         "authenticated": is_authenticated()
     })
 
 
 @app.route("/password/set", methods=["POST"])
 def password_set():
-    settings = get_settings()
-
-    # Anyone can set the first password.
-    # Once a password exists, authentication is required
-    # to replace it.
-    if settings["password_hash"] is not None:
-        if not is_authenticated():
-            return jsonify({
-                "error": "Authentication required"
-            }), 401
-
     data = request.get_json() or {}
-    password = data.get("password", "")
 
-    if not isinstance(password, str) or len(password) < 1:
+    password = data.get("password")
+
+    if not password:
         return jsonify({
             "error": "Password cannot be empty"
         }), 400
 
+    settings = get_settings()
+
+    # You can only set a password if one isn't already set.
+    if settings["password"] is not None:
+        return jsonify({
+            "error": "A password is already set"
+        }), 403
+
     set_password(password)
 
-    # The person who sets the password is automatically authenticated.
-    session["authenticated"] = True
+    # Whoever sets the password is automatically authenticated.
+    session["toggle_authenticated"] = True
 
     return jsonify({
         "success": True,
@@ -230,27 +168,26 @@ def password_set():
     })
 
 
-@app.route("/password/login", methods=["POST"])
-def password_login():
+@app.route("/password/unlock", methods=["POST"])
+def password_unlock():
+    data = request.get_json() or {}
+
+    password = data.get("password", "")
     settings = get_settings()
 
-    if settings["password_hash"] is None:
+    if settings["password"] is None:
         return jsonify({
-            "error": "No password is set"
-        }), 400
+            "success": True,
+            "authenticated": True
+        })
 
-    data = request.get_json() or {}
-    password = data.get("password", "")
-
-    if not verify_password(
-        password,
-        settings["password_hash"]
-    ):
+    if password != settings["password"]:
         return jsonify({
+            "success": False,
             "error": "Incorrect password"
         }), 401
 
-    session["authenticated"] = True
+    session["toggle_authenticated"] = True
 
     return jsonify({
         "success": True,
@@ -260,22 +197,32 @@ def password_login():
 
 @app.route("/password/remove", methods=["POST"])
 def password_remove():
+    data = request.get_json() or {}
+
     settings = get_settings()
 
-    if settings["password_hash"] is None:
+    if settings["password"] is None:
         return jsonify({
-            "success": True,
-            "password_set": False
+            "success": True
         })
 
+    # Removing the password requires authentication.
     if not is_authenticated():
         return jsonify({
-            "error": "Authentication required"
+            "error": "password_required"
+        }), 403
+
+    password = data.get("password", "")
+
+    if password != settings["password"]:
+        return jsonify({
+            "success": False,
+            "error": "Incorrect password"
         }), 401
 
     remove_password()
 
-    session.pop("authenticated", None)
+    session["toggle_authenticated"] = False
 
     return jsonify({
         "success": True,
@@ -284,13 +231,12 @@ def password_remove():
     })
 
 
-@app.route("/logout", methods=["POST"])
-def logout():
-    session.pop("authenticated", None)
+@app.route("/password/logout", methods=["POST"])
+def password_logout():
+    session["toggle_authenticated"] = False
 
     return jsonify({
-        "success": True,
-        "authenticated": False
+        "success": True
     })
 
 
