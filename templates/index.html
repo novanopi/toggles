@@ -18,11 +18,13 @@
             align-items: center;
             justify-content: center;
             background: #111;
-            color: white;
             font-family: Arial, sans-serif;
+            color: white;
         }
 
         .container {
+            width: 100%;
+            max-width: 320px;
             text-align: center;
         }
 
@@ -34,7 +36,7 @@
             padding: 4px;
             cursor: pointer;
             transition: background 0.2s;
-            margin: 0 auto 24px;
+            margin: 0 auto 20px;
         }
 
         .toggle::after {
@@ -55,55 +57,68 @@
             transform: translateX(36px);
         }
 
+        .status {
+            color: #aaa;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+
         button {
             border: none;
             border-radius: 8px;
             padding: 10px 16px;
-            margin: 4px;
+            font-size: 14px;
+            cursor: pointer;
             background: #333;
             color: white;
-            cursor: pointer;
+            margin: 4px;
         }
 
         button:hover {
             background: #444;
         }
 
-        .status {
-            color: #999;
-            font-size: 14px;
-            margin-bottom: 12px;
+        .danger {
+            background: #7f1d1d;
+        }
+
+        .danger:hover {
+            background: #991b1b;
         }
 
         .panel {
-            display: none;
-            margin-top: 20px;
-        }
-
-        .panel.visible {
-            display: block;
+            margin-top: 10px;
         }
 
         input {
-            width: 220px;
-            padding: 10px;
-            border-radius: 8px;
+            width: 100%;
+            padding: 11px;
             border: 1px solid #444;
+            border-radius: 8px;
             background: #222;
             color: white;
+            outline: none;
             margin-bottom: 8px;
+        }
+
+        input:focus {
+            border-color: #666;
+        }
+
+        .hidden {
+            display: none;
         }
 
         .error {
             color: #ef4444;
-            margin-top: 10px;
             font-size: 14px;
+            margin-top: 8px;
         }
 
         .success {
             color: #22c55e;
-            margin-top: 10px;
             font-size: 14px;
+            margin-top: 8px;
         }
     </style>
 </head>
@@ -121,331 +136,247 @@
     <div id="status" class="status">
         {% if password_set %}
             {% if authenticated %}
-                🔓 Unlocked
+                Unlocked
             {% else %}
-                🔒 Locked
+                Locked
             {% endif %}
         {% else %}
             No password
         {% endif %}
     </div>
 
+
     <!-- No password -->
     <div
         id="setPasswordPanel"
-        class="panel {% if not password_set %}visible{% endif %}"
+        class="panel {% if password_set %}hidden{% endif %}"
     >
-        <div>
-            <input
-                id="newPassword"
-                type="password"
-                placeholder="Create password"
-            >
-        </div>
+        <input
+            id="newPassword"
+            type="password"
+            placeholder="New password"
+            autocomplete="new-password"
+        >
 
         <button onclick="setPassword()">
             Set Password
         </button>
     </div>
 
-    <!-- Password required -->
-    <div
-        id="loginPanel"
-        class="panel {% if password_set and not authenticated %}visible{% endif %}"
-    >
-        <div>
-            <input
-                id="password"
-                type="password"
-                placeholder="Password"
-                onkeydown="handleEnter(event)"
-            >
-        </div>
 
-        <button onclick="login()">
+    <!-- Password exists but user isn't authenticated -->
+    <div
+        id="unlockPanel"
+        class="panel {% if not password_set or authenticated %}hidden{% endif %}"
+    >
+        <input
+            id="unlockPassword"
+            type="password"
+            placeholder="Password"
+            autocomplete="current-password"
+        >
+
+        <button onclick="unlock()">
             Unlock
         </button>
+
+        <div id="unlockError" class="error"></div>
     </div>
+
 
     <!-- Authenticated -->
     <div
-        id="managementPanel"
-        class="panel {% if password_set and authenticated %}visible{% endif %}"
+        id="managePanel"
+        class="panel {% if not password_set or not authenticated %}hidden{% endif %}"
     >
-        <button onclick="removePassword()">
+        <button onclick="removePassword()" class="danger">
             Remove Password
         </button>
 
         <button onclick="logout()">
             Lock
         </button>
-    </div>
 
-    <div id="message"></div>
+        <div id="manageError" class="error"></div>
+    </div>
 
 </div>
 
+
 <script>
 
+async function toggleState() {
     const toggle = document.getElementById("toggle");
-    const statusElement = document.getElementById("status");
 
-    const setPasswordPanel =
-        document.getElementById("setPasswordPanel");
+    const newState = !toggle.classList.contains("on");
 
-    const loginPanel =
-        document.getElementById("loginPanel");
+    const response = await fetch("/toggle", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            enabled: newState
+        })
+    });
 
-    const managementPanel =
-        document.getElementById("managementPanel");
-
-    const message =
-        document.getElementById("message");
-
-
-    function showMessage(text, success = false) {
-        message.textContent = text;
-        message.className = success ? "success" : "error";
+    if (response.status === 403) {
+        showUnlockPanel();
+        return;
     }
 
-
-    function clearMessage() {
-        message.textContent = "";
-        message.className = "";
+    if (!response.ok) {
+        return;
     }
 
+    const data = await response.json();
 
-    function updateUI(data) {
-        const passwordSet = data.password_set;
-        const authenticated = data.authenticated;
+    toggle.classList.toggle("on", data.enabled);
+}
 
-        setPasswordPanel.classList.toggle(
-            "visible",
-            !passwordSet
-        );
 
-        loginPanel.classList.toggle(
-            "visible",
-            passwordSet && !authenticated
-        );
+async function setPassword() {
+    const input = document.getElementById("newPassword");
+    const password = input.value;
 
-        managementPanel.classList.toggle(
-            "visible",
-            passwordSet && authenticated
-        );
-
-        if (!passwordSet) {
-            statusElement.textContent = "No password";
-        } else if (authenticated) {
-            statusElement.textContent = "🔓 Unlocked";
-        } else {
-            statusElement.textContent = "🔒 Locked";
-        }
+    if (!password) {
+        return;
     }
 
+    const response = await fetch("/password/set", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            password: password
+        })
+    });
 
-    async function toggleState() {
+    const data = await response.json();
 
-        clearMessage();
-
-        const newState =
-            !toggle.classList.contains("on");
-
-        const response = await fetch("/toggle", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                enabled: newState
-            })
-        });
-
-        const data = await response.json();
-
-        if (response.status === 401) {
-            showMessage("Enter the password to unlock the toggle.");
-
-            document
-                .getElementById("password")
-                .focus();
-
-            return;
-        }
-
-        if (!response.ok) {
-            showMessage(data.error || "Something went wrong.");
-            return;
-        }
-
-        toggle.classList.toggle(
-            "on",
-            data.enabled
-        );
+    if (!response.ok) {
+        alert(data.error || "Could not set password");
+        return;
     }
 
+    input.value = "";
 
-    async function setPassword() {
+    updateUI(true, true);
+}
 
-        clearMessage();
 
-        const password =
-            document.getElementById("newPassword").value;
+async function unlock() {
+    const input = document.getElementById("unlockPassword");
+    const error = document.getElementById("unlockError");
 
-        if (!password) {
-            showMessage("Enter a password.");
-            return;
-        }
+    const password = input.value;
 
-        const response = await fetch(
-            "/password/set",
-            {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    password: password
-                })
-            }
-        );
+    error.textContent = "";
 
-        const data = await response.json();
+    const response = await fetch("/password/unlock", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            password: password
+        })
+    });
 
-        if (!response.ok) {
-            showMessage(data.error || "Could not set password.");
-            return;
-        }
+    const data = await response.json();
 
-        document.getElementById("newPassword").value = "";
-
-        updateUI(data);
-
-        showMessage(
-            "Password set. The toggle is now protected.",
-            true
-        );
+    if (!response.ok) {
+        error.textContent = data.error || "Incorrect password";
+        return;
     }
 
+    input.value = "";
 
-    async function login() {
+    updateUI(true, true);
+}
 
-        clearMessage();
 
-        const password =
-            document.getElementById("password").value;
+async function removePassword() {
+    const password = prompt(
+        "Enter your current password to remove the password:"
+    );
 
-        if (!password) {
-            showMessage("Enter the password.");
-            return;
-        }
-
-        const response = await fetch(
-            "/password/login",
-            {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    password: password
-                })
-            }
-        );
-
-        const data = await response.json();
-
-        if (!response.ok) {
-            showMessage(data.error || "Incorrect password.");
-            return;
-        }
-
-        document.getElementById("password").value = "";
-
-        updateUI({
-            password_set: true,
-            authenticated: true
-        });
-
-        showMessage(
-            "Unlocked.",
-            true
-        );
+    if (password === null) {
+        return;
     }
 
+    const response = await fetch("/password/remove", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            password: password
+        })
+    });
 
-    async function removePassword() {
+    const data = await response.json();
 
-        clearMessage();
-
-        const confirmed = confirm(
-            "Remove the password? Anyone will be able to change the toggle."
-        );
-
-        if (!confirmed) {
-            return;
-        }
-
-        const response = await fetch(
-            "/password/remove",
-            {
-                method: "POST"
-            }
-        );
-
-        const data = await response.json();
-
-        if (!response.ok) {
-            showMessage(
-                data.error || "Could not remove password."
-            );
-            return;
-        }
-
-        updateUI(data);
-
-        showMessage(
-            "Password removed. Anyone can now change the toggle.",
-            true
-        );
+    if (!response.ok) {
+        document.getElementById("manageError").textContent =
+            data.error || "Could not remove password";
+        return;
     }
 
+    updateUI(false, false);
+}
 
-    async function logout() {
 
-        clearMessage();
+async function logout() {
+    const response = await fetch("/password/logout", {
+        method: "POST"
+    });
 
-        const response = await fetch(
-            "/logout",
-            {
-                method: "POST"
-            }
-        );
-
-        const data = await response.json();
-
-        if (!response.ok) {
-            showMessage("Could not lock.");
-            return;
-        }
-
-        updateUI({
-            password_set: true,
-            authenticated: false
-        });
-
-        showMessage(
-            "Locked.",
-            true
-        );
+    if (!response.ok) {
+        return;
     }
 
+    updateUI(true, false);
+}
 
-    function handleEnter(event) {
-        if (event.key === "Enter") {
-            login();
-        }
+
+function showUnlockPanel() {
+    document.getElementById("unlockPanel")
+        .classList.remove("hidden");
+
+    document.getElementById("unlockPassword")
+        .focus();
+
+    document.getElementById("status").textContent = "Locked";
+}
+
+
+function updateUI(passwordSet, authenticated) {
+
+    const setPanel = document.getElementById("setPasswordPanel");
+    const unlockPanel = document.getElementById("unlockPanel");
+    const managePanel = document.getElementById("managePanel");
+    const status = document.getElementById("status");
+
+    setPanel.classList.toggle("hidden", passwordSet);
+    unlockPanel.classList.toggle(
+        "hidden",
+        !passwordSet || authenticated
+    );
+    managePanel.classList.toggle(
+        "hidden",
+        !passwordSet || !authenticated
+    );
+
+    if (!passwordSet) {
+        status.textContent = "No password";
+    } else if (authenticated) {
+        status.textContent = "Unlocked";
+    } else {
+        status.textContent = "Locked";
     }
+}
 
 </script>
 
