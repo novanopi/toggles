@@ -20,10 +20,11 @@ def init_db():
             )
         """)
 
-        # Handle an existing database created by the old version.
         columns = [
             row[1]
-            for row in conn.execute("PRAGMA table_info(settings)").fetchall()
+            for row in conn.execute(
+                "PRAGMA table_info(settings)"
+            ).fetchall()
         ]
 
         if "password" not in columns:
@@ -31,9 +32,15 @@ def init_db():
                 "ALTER TABLE settings ADD COLUMN password TEXT"
             )
 
+        # Add Gag state to existing databases.
+        if "gagged" not in columns:
+            conn.execute(
+                "ALTER TABLE settings ADD COLUMN gagged INTEGER NOT NULL DEFAULT 0"
+            )
+
         conn.execute("""
-            INSERT OR IGNORE INTO settings (id, enabled, password)
-            VALUES (1, 0, NULL)
+            INSERT OR IGNORE INTO settings (id, enabled, password, gagged)
+            VALUES (1, 0, NULL, 0)
         """)
 
         conn.commit()
@@ -42,14 +49,15 @@ def init_db():
 def get_settings():
     with sqlite3.connect(DATABASE) as conn:
         row = conn.execute("""
-            SELECT enabled, password
+            SELECT enabled, password, gagged
             FROM settings
             WHERE id = 1
         """).fetchone()
 
         return {
             "enabled": bool(row[0]),
-            "password": row[1]
+            "password": row[1],
+            "gagged": bool(row[2])
         }
 
 
@@ -62,6 +70,19 @@ def set_state(enabled):
         conn.execute(
             "UPDATE settings SET enabled = ? WHERE id = 1",
             (1 if enabled else 0,)
+        )
+        conn.commit()
+
+
+def get_gagged():
+    return get_settings()["gagged"]
+
+
+def set_gagged(gagged):
+    with sqlite3.connect(DATABASE) as conn:
+        conn.execute(
+            "UPDATE settings SET gagged = ? WHERE id = 1",
+            (1 if gagged else 0,)
         )
         conn.commit()
 
@@ -101,6 +122,7 @@ def index():
     return render_template(
         "index.html",
         enabled=settings["enabled"],
+        gagged=settings["gagged"],
         password_set=settings["password"] is not None,
         authenticated=is_authenticated()
     )
@@ -122,7 +144,27 @@ def toggle():
     set_state(enabled)
 
     return jsonify({
-        "enabled": get_state()
+        "is_forced_ctrlem": get_state()
+    })
+
+
+@app.route("/gag", methods=["POST"])
+def gag():
+    data = request.get_json() or {}
+
+    settings = get_settings()
+
+    # If a password exists, authentication is required.
+    if settings["password"] is not None and not is_authenticated():
+        return jsonify({
+            "error": "password_required"
+        }), 403
+
+    gagged = bool(data.get("gagged", False))
+    set_gagged(gagged)
+
+    return jsonify({
+        "is_gagged": get_gagged()
     })
 
 
@@ -131,7 +173,8 @@ def api_status():
     settings = get_settings()
 
     return jsonify({
-        "is_on": settings["enabled"],
+        "is_forced_ctrlem": settings["enabled"],
+        "is_gagged": settings["gagged"],
         "password_set": settings["password"] is not None,
         "authenticated": is_authenticated()
     })
