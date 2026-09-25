@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Wife</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #111;
+            font-family: Arial, sans-serif;
+            color: white;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 360px;
+            text-align: center;
+        }
+
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            margin-bottom: 16px;
+        }
+
+        .toggle-label {
+            font-size: 16px;
+            color: white;
+            text-align: left;
+        }
+
+        .toggle {
+            flex-shrink: 0;
+            width: 80px;
+            height: 44px;
+            border-radius: 999px;
+            background: #444;
+            padding: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .toggle::after {
+            content: "";
+            display: block;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: white;
+            transition: transform 0.2s;
+        }
+
+        .toggle.on {
+            background: #22c55e;
+        }
+
+        .toggle.on::after {
+            transform: translateX(36px);
+        }
+
+        .status {
+            color: #aaa;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+
+        button {
+            border: none;
+            border-radius: 8px;
+            padding: 10px 16px;
+            font-size: 14px;
+            cursor: pointer;
+            background: #333;
+            color: white;
+            margin: 4px;
+        }
+
+        button:hover {
+            background: #444;
+        }
+
+        .danger {
+            background: #7f1d1d;
+        }
+
+        .danger:hover {
+            background: #991b1b;
+        }
+
+        .panel {
+            margin-top: 10px;
+        }
+
+        input {
+            width: 100%;
+            padding: 11px;
+            border: 1px solid #444;
+            border-radius: 8px;
+            background: #222;
+            color: white;
+            outline: none;
+            margin-bottom: 8px;
+        }
+
+        input:focus {
+            border-color: #666;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .error {
+            color: #ef4444;
+            font-size: 14px;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <!-- Gag -->
+    <div class="toggle-row">
+        <div class="toggle-label">
+            Gag
+        </div>
+
+        <div
+            id="gagToggle"
+            class="toggle {% if gagged %}on{% endif %}"
+            onclick="toggleGag()"
+        ></div>
+    </div>
+
+
+    <div id="status" class="status">
+        {% if password_set %}
+            {% if authenticated %}
+                Unlocked
+            {% else %}
+                Locked
+            {% endif %}
+        {% else %}
+            No password
+        {% endif %}
+    </div>
+
+
+    <!-- No password -->
+    <div
+        id="setPasswordPanel"
+        class="panel {% if password_set %}hidden{% endif %}"
+    >
+        <input
+            id="newPassword"
+            type="password"
+            placeholder="New password"
+            autocomplete="new-password"
+        >
+
+        <button onclick="setPassword()">
+            Set Password
+        </button>
+    </div>
+
+
+    <!-- Password exists but user isn't authenticated -->
+    <div
+        id="unlockPanel"
+        class="panel {% if not password_set or authenticated %}hidden{% endif %}"
+    >
+        <input
+            id="unlockPassword"
+            type="password"
+            placeholder="Password"
+            autocomplete="current-password"
+        >
+
+        <button onclick="unlock()">
+            Unlock
+        </button>
+
+        <div id="unlockError" class="error"></div>
+    </div>
+
+
+    <!-- Authenticated -->
+    <div
+        id="managePanel"
+        class="panel {% if not password_set or not authenticated %}hidden{% endif %}"
+    >
+        <button onclick="removePassword()" class="danger">
+            Remove Password
+        </button>
+
+        <button onclick="logout()">
+            Lock
+        </button>
+
+        <div id="manageError" class="error"></div>
+    </div>
+
+</div>
+
+
+<script>
+
+async function toggleGag() {
+    const toggle = document.getElementById("gagToggle");
+
+    const newState = !toggle.classList.contains("on");
+
+    const response = await fetch("/wife/gag", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            gagged: newState
+        })
+    });
+
+    if (response.status === 403) {
+        showUnlockPanel();
+        return;
+    }
+
+    if (!response.ok) {
+        return;
+    }
+
+    const data = await response.json();
+
+    toggle.classList.toggle("on", data.is_gagged);
+}
+
+
+async function setPassword() {
+    const input = document.getElementById("newPassword");
+    const password = input.value;
+
+    if (!password) {
+        return;
+    }
+
+    const response = await fetch("/wife/password/set", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            password: password
+        })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+        alert(data.error || "Could not set password");
+        return;
+    }
+
+    input.value = "";
+
+    updateUI(true, true);
+}
+
+
+async function unlock() {
+    const input = document.getElementById("unlockPassword");
+    const error = document.getElementById("unlockError");
+
+    const password = input.value;
+
+    error.textContent = "";
+
+    const response = await fetch("/wife/password/unlock", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            password: password
+        })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+        error.textContent = data.error || "Incorrect password";
+        return;
+    }
+
+    input.value = "";
+
+    updateUI(true, true);
+}
+
+
+async function removePassword() {
+    const password = prompt(
+        "Enter your current Wife password to remove the password:"
+    );
+
+    if (password === null) {
+        return;
+    }
+
+    const response = await fetch("/wife/password/remove", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            password: password
+        })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+        document.getElementById("manageError").textContent =
+            data.error || "Could not remove password";
+        return;
+    }
+
+    updateUI(false, false);
+}
+
+
+async function logout() {
+    const response = await fetch("/wife/password/logout", {
+        method: "POST"
+    });
+
+    if (!response.ok) {
+        return;
+    }
+
+    updateUI(true, false);
+}
+
+
+function showUnlockPanel() {
+    document.getElementById("unlockPanel")
+        .classList.remove("hidden");
+
+    document.getElementById("unlockPassword")
+        .focus();
+
+    document.getElementById("status").textContent = "Locked";
+}
+
+
+function updateUI(passwordSet, authenticated) {
+
+    const setPanel = document.getElementById("setPasswordPanel");
+    const unlockPanel = document.getElementById("unlockPanel");
+    const managePanel = document.getElementById("managePanel");
+    const status = document.getElementById("status");
+
+    setPanel.classList.toggle("hidden", passwordSet);
+
+    unlockPanel.classList.toggle(
+        "hidden",
+        !passwordSet || authenticated
+    );
+
+    managePanel.classList.toggle(
+        "hidden",
+        !passwordSet || !authenticated
+    );
+
+    if (!passwordSet) {
+        status.textContent = "No password";
+    } else if (authenticated) {
+        status.textContent = "Unlocked";
+    } else {
+        status.textContent = "Locked";
+    }
+}
+
+</script>
+
+</body>
+</html>
