@@ -19,7 +19,9 @@ def init_db():
                 password TEXT,
                 gagged INTEGER NOT NULL DEFAULT 0,
                 lily_gagged INTEGER NOT NULL DEFAULT 0,
-                lily_password TEXT
+                lily_password TEXT,
+                wife_gagged INTEGER NOT NULL DEFAULT 0,
+                wife_password TEXT
             )
         """)
 
@@ -52,6 +54,17 @@ def init_db():
                 "ALTER TABLE settings ADD COLUMN lily_password TEXT"
             )
 
+        # Wife database fields
+        if "wife_gagged" not in columns:
+            conn.execute(
+                "ALTER TABLE settings ADD COLUMN wife_gagged INTEGER NOT NULL DEFAULT 0"
+            )
+
+        if "wife_password" not in columns:
+            conn.execute(
+                "ALTER TABLE settings ADD COLUMN wife_password TEXT"
+            )
+
         conn.execute("""
             INSERT OR IGNORE INTO settings (
                 id,
@@ -59,14 +72,18 @@ def init_db():
                 password,
                 gagged,
                 lily_gagged,
-                lily_password
+                lily_password,
+                wife_gagged,
+                wife_password
             )
-            VALUES (1, 0, NULL, 0, 0, NULL)
+            VALUES (1, 0, NULL, 0, 0, NULL, 0, NULL)
         """)
 
         conn.commit()
 
+
 init_db()
+
 
 def get_settings():
     with sqlite3.connect(DATABASE) as conn:
@@ -76,7 +93,9 @@ def get_settings():
                 password,
                 gagged,
                 lily_gagged,
-                lily_password
+                lily_password,
+                wife_gagged,
+                wife_password
             FROM settings
             WHERE id = 1
         """).fetchone()
@@ -86,7 +105,9 @@ def get_settings():
             "password": row[1],
             "gagged": bool(row[2]),
             "lily_gagged": bool(row[3]),
-            "lily_password": row[4]
+            "lily_password": row[4],
+            "wife_gagged": bool(row[5]),
+            "wife_password": row[6]
         }
 
 
@@ -494,6 +515,203 @@ def lily_password_remove():
 @app.route("/lily/password/logout", methods=["POST"])
 def lily_password_logout():
     session["lily_authenticated"] = False
+
+    return jsonify({
+        "success": True,
+        "authenticated": False
+    })
+
+
+# ============================================================
+# WIFE WEBSITE
+# ============================================================
+
+def get_wife_gagged():
+    return get_settings()["wife_gagged"]
+
+
+def set_wife_gagged(gagged):
+    with sqlite3.connect(DATABASE) as conn:
+        conn.execute(
+            "UPDATE settings SET wife_gagged = ? WHERE id = 1",
+            (1 if gagged else 0,)
+        )
+        conn.commit()
+
+
+def set_wife_password(password):
+    with sqlite3.connect(DATABASE) as conn:
+        conn.execute(
+            "UPDATE settings SET wife_password = ? WHERE id = 1",
+            (password,)
+        )
+        conn.commit()
+
+
+def remove_wife_password():
+    with sqlite3.connect(DATABASE) as conn:
+        conn.execute(
+            "UPDATE settings SET wife_password = NULL WHERE id = 1"
+        )
+        conn.commit()
+
+
+def is_wife_authenticated():
+    return session.get("wife_authenticated", False)
+
+
+@app.route("/wife")
+def wife():
+    settings = get_settings()
+
+    return render_template(
+        "wife.html",
+        gagged=settings["wife_gagged"],
+        password_set=settings["wife_password"] is not None,
+        authenticated=is_wife_authenticated()
+    )
+
+
+@app.route("/wife/gag", methods=["POST"])
+def wife_gag():
+    data = request.get_json() or {}
+
+    settings = get_settings()
+
+    # Wife has its own independent password.
+    if (
+        settings["wife_password"] is not None
+        and not is_wife_authenticated()
+    ):
+        return jsonify({
+            "error": "password_required"
+        }), 403
+
+    gagged = bool(data.get("gagged", False))
+
+    set_wife_gagged(gagged)
+
+    return jsonify({
+        "success": True,
+        "is_gagged": get_wife_gagged()
+    })
+
+
+@app.route("/api/wife/status", methods=["GET"])
+def wife_api_status():
+    settings = get_settings()
+
+    return jsonify({
+        "is_gagged": settings["wife_gagged"],
+        "password_set": settings["wife_password"] is not None,
+        "authenticated": is_wife_authenticated()
+    })
+
+
+@app.route("/wife/password/set", methods=["POST"])
+def wife_password_set():
+    data = request.get_json() or {}
+
+    password = data.get("password")
+
+    if not password:
+        return jsonify({
+            "success": False,
+            "error": "Password cannot be empty"
+        }), 400
+
+    settings = get_settings()
+
+    if settings["wife_password"] is not None:
+        return jsonify({
+            "success": False,
+            "error": "A password is already set"
+        }), 403
+
+    set_wife_password(password)
+
+    # Automatically authenticate after creating the password.
+    session["wife_authenticated"] = True
+
+    return jsonify({
+        "success": True,
+        "password_set": True,
+        "authenticated": True
+    })
+
+
+@app.route("/wife/password/unlock", methods=["POST"])
+def wife_password_unlock():
+    data = request.get_json() or {}
+
+    password = data.get("password", "")
+    settings = get_settings()
+
+    if settings["wife_password"] is None:
+        session["wife_authenticated"] = True
+
+        return jsonify({
+            "success": True,
+            "password_set": False,
+            "authenticated": True
+        })
+
+    if password != settings["wife_password"]:
+        return jsonify({
+            "success": False,
+            "error": "Incorrect password"
+        }), 401
+
+    session["wife_authenticated"] = True
+
+    return jsonify({
+        "success": True,
+        "password_set": True,
+        "authenticated": True
+    })
+
+
+@app.route("/wife/password/remove", methods=["POST"])
+def wife_password_remove():
+    data = request.get_json() or {}
+
+    settings = get_settings()
+
+    if settings["wife_password"] is None:
+        return jsonify({
+            "success": True,
+            "password_set": False,
+            "authenticated": False
+        })
+
+    if not is_wife_authenticated():
+        return jsonify({
+            "success": False,
+            "error": "password_required"
+        }), 403
+
+    password = data.get("password", "")
+
+    if password != settings["wife_password"]:
+        return jsonify({
+            "success": False,
+            "error": "Incorrect password"
+        }), 401
+
+    remove_wife_password()
+
+    session["wife_authenticated"] = False
+
+    return jsonify({
+        "success": True,
+        "password_set": False,
+        "authenticated": False
+    })
+
+
+@app.route("/wife/password/logout", methods=["POST"])
+def wife_password_logout():
+    session["wife_authenticated"] = False
 
     return jsonify({
         "success": True,
