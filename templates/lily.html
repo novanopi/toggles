@@ -7,9 +7,7 @@
     <title>Lily</title>
 
     <style>
-        * {
-            box-sizing: border-box;
-        }
+        * { box-sizing: border-box; }
 
         body {
             margin: 0;
@@ -119,6 +117,12 @@
             border-color: #666;
         }
 
+        .username-display {
+            color: #aaa;
+            font-size: 13px;
+            margin-bottom: 8px;
+        }
+
         .hidden {
             display: none;
         }
@@ -135,11 +139,8 @@
 
 <div class="container">
 
-    <!-- Gag -->
     <div class="toggle-row">
-        <div class="toggle-label">
-            Gag
-        </div>
+        <div class="toggle-label">Gag</div>
 
         <div
             id="gagToggle"
@@ -147,7 +148,6 @@
             onclick="toggleGag()"
         ></div>
     </div>
-
 
     <div id="status" class="status">
         {% if password_set %}
@@ -161,12 +161,12 @@
         {% endif %}
     </div>
 
-
-    <!-- No password -->
     <div
         id="setPasswordPanel"
         class="panel {% if password_set %}hidden{% endif %}"
     >
+        <div class="username-display">Account: lily</div>
+
         <input
             id="newPassword"
             type="password"
@@ -179,12 +179,18 @@
         </button>
     </div>
 
-
-    <!-- Password exists but user isn't authenticated -->
     <div
         id="unlockPanel"
         class="panel {% if not password_set or authenticated %}hidden{% endif %}"
     >
+        <input
+            id="username"
+            type="text"
+            value="lily"
+            autocomplete="username"
+            readonly
+        >
+
         <input
             id="unlockPassword"
             type="password"
@@ -199,8 +205,6 @@
         <div id="unlockError" class="error"></div>
     </div>
 
-
-    <!-- Authenticated -->
     <div
         id="managePanel"
         class="panel {% if not password_set or not authenticated %}hidden{% endif %}"
@@ -218,22 +222,16 @@
 
 </div>
 
-
 <script>
 
 async function toggleGag() {
     const toggle = document.getElementById("gagToggle");
-
     const newState = !toggle.classList.contains("on");
 
     const response = await fetch("/lily/gag", {
         method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-            gagged: newState
-        })
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({gagged: newState})
     });
 
     if (response.status === 403) {
@@ -241,9 +239,7 @@ async function toggleGag() {
         return;
     }
 
-    if (!response.ok) {
-        return;
-    }
+    if (!response.ok) return;
 
     const data = await response.json();
 
@@ -255,16 +251,13 @@ async function setPassword() {
     const input = document.getElementById("newPassword");
     const password = input.value;
 
-    if (!password) {
-        return;
-    }
+    if (!password) return;
 
     const response = await fetch("/lily/password/set", {
         method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
+        headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
+            username: "lily",
             password: password
         })
     });
@@ -284,26 +277,25 @@ async function setPassword() {
 
 async function unlock() {
     const input = document.getElementById("unlockPassword");
+    const username = document.getElementById("username");
     const error = document.getElementById("unlockError");
-
-    const password = input.value;
 
     error.textContent = "";
 
     const response = await fetch("/lily/password/unlock", {
         method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
+        headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
-            password: password
+            username: username.value,
+            password: input.value
         })
     });
 
     const data = await response.json();
 
     if (!response.ok) {
-        error.textContent = data.error || "Incorrect password";
+        error.textContent =
+            data.error || "Incorrect username or password";
         return;
     }
 
@@ -318,16 +310,13 @@ async function removePassword() {
         "Enter your current Lily password to remove the password:"
     );
 
-    if (password === null) {
-        return;
-    }
+    if (password === null) return;
 
     const response = await fetch("/lily/password/remove", {
         method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
+        headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
+            username: "lily",
             password: password
         })
     });
@@ -349,9 +338,7 @@ async function logout() {
         method: "POST"
     });
 
-    if (!response.ok) {
-        return;
-    }
+    if (!response.ok) return;
 
     updateUI(true, false);
 }
@@ -361,19 +348,24 @@ function showUnlockPanel() {
     document.getElementById("unlockPanel")
         .classList.remove("hidden");
 
-    document.getElementById("unlockPassword")
-        .focus();
+    document.getElementById("unlockPassword").focus();
 
     document.getElementById("status").textContent = "Locked";
 }
 
 
 function updateUI(passwordSet, authenticated) {
+    const setPanel =
+        document.getElementById("setPasswordPanel");
 
-    const setPanel = document.getElementById("setPasswordPanel");
-    const unlockPanel = document.getElementById("unlockPanel");
-    const managePanel = document.getElementById("managePanel");
-    const status = document.getElementById("status");
+    const unlockPanel =
+        document.getElementById("unlockPanel");
+
+    const managePanel =
+        document.getElementById("managePanel");
+
+    const status =
+        document.getElementById("status");
 
     setPanel.classList.toggle("hidden", passwordSet);
 
