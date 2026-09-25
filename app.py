@@ -66,6 +66,7 @@ def init_db():
 
         conn.commit()
 
+init_db()
 
 def get_settings():
     with sqlite3.connect(DATABASE) as conn:
