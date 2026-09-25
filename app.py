@@ -229,7 +229,13 @@ def api_status():
 def password_set():
     data = request.get_json() or {}
 
+    username = data.get("username", "")
     password = data.get("password")
+
+    if username != "main":
+        return jsonify({
+            "error": "Invalid username"
+        }), 400
 
     if not password:
         return jsonify({
@@ -249,6 +255,7 @@ def password_set():
 
     return jsonify({
         "success": True,
+        "username": "main",
         "password_set": True,
         "authenticated": True
     })
@@ -258,25 +265,36 @@ def password_set():
 def password_unlock():
     data = request.get_json() or {}
 
+    username = data.get("username", "")
     password = data.get("password", "")
     settings = get_settings()
 
+    if username != "main":
+        return jsonify({
+            "success": False,
+            "error": "Incorrect username or password"
+        }), 401
+
     if settings["password"] is None:
+        session["toggle_authenticated"] = True
+
         return jsonify({
             "success": True,
+            "username": "main",
             "authenticated": True
         })
 
     if password != settings["password"]:
         return jsonify({
             "success": False,
-            "error": "Incorrect password"
+            "error": "Incorrect username or password"
         }), 401
 
     session["toggle_authenticated"] = True
 
     return jsonify({
         "success": True,
+        "username": "main",
         "authenticated": True
     })
 
@@ -284,6 +302,9 @@ def password_unlock():
 @app.route("/password/remove", methods=["POST"])
 def password_remove():
     data = request.get_json() or {}
+
+    username = data.get("username", "")
+    password = data.get("password", "")
 
     settings = get_settings()
 
@@ -297,12 +318,16 @@ def password_remove():
             "error": "password_required"
         }), 403
 
-    password = data.get("password", "")
+    if username != "main":
+        return jsonify({
+            "success": False,
+            "error": "Incorrect username or password"
+        }), 401
 
     if password != settings["password"]:
         return jsonify({
             "success": False,
-            "error": "Incorrect password"
+            "error": "Incorrect username or password"
         }), 401
 
     remove_password()
@@ -381,7 +406,6 @@ def lily_gag():
 
     settings = get_settings()
 
-    # Lily has its own independent password.
     if (
         settings["lily_password"] is not None
         and not is_lily_authenticated()
@@ -415,7 +439,14 @@ def lily_api_status():
 def lily_password_set():
     data = request.get_json() or {}
 
+    username = data.get("username", "")
     password = data.get("password")
+
+    if username != "lily":
+        return jsonify({
+            "success": False,
+            "error": "Invalid username"
+        }), 400
 
     if not password:
         return jsonify({
@@ -433,11 +464,11 @@ def lily_password_set():
 
     set_lily_password(password)
 
-    # Automatically authenticate after creating the password.
     session["lily_authenticated"] = True
 
     return jsonify({
         "success": True,
+        "username": "lily",
         "password_set": True,
         "authenticated": True
     })
@@ -447,14 +478,22 @@ def lily_password_set():
 def lily_password_unlock():
     data = request.get_json() or {}
 
+    username = data.get("username", "")
     password = data.get("password", "")
     settings = get_settings()
+
+    if username != "lily":
+        return jsonify({
+            "success": False,
+            "error": "Incorrect username or password"
+        }), 401
 
     if settings["lily_password"] is None:
         session["lily_authenticated"] = True
 
         return jsonify({
             "success": True,
+            "username": "lily",
             "password_set": False,
             "authenticated": True
         })
@@ -462,13 +501,14 @@ def lily_password_unlock():
     if password != settings["lily_password"]:
         return jsonify({
             "success": False,
-            "error": "Incorrect password"
+            "error": "Incorrect username or password"
         }), 401
 
     session["lily_authenticated"] = True
 
     return jsonify({
         "success": True,
+        "username": "lily",
         "password_set": True,
         "authenticated": True
     })
@@ -477,6 +517,9 @@ def lily_password_unlock():
 @app.route("/lily/password/remove", methods=["POST"])
 def lily_password_remove():
     data = request.get_json() or {}
+
+    username = data.get("username", "")
+    password = data.get("password", "")
 
     settings = get_settings()
 
@@ -493,12 +536,16 @@ def lily_password_remove():
             "error": "password_required"
         }), 403
 
-    password = data.get("password", "")
+    if username != "lily":
+        return jsonify({
+            "success": False,
+            "error": "Incorrect username or password"
+        }), 401
 
     if password != settings["lily_password"]:
         return jsonify({
             "success": False,
-            "error": "Incorrect password"
+            "error": "Incorrect username or password"
         }), 401
 
     remove_lily_password()
@@ -578,7 +625,6 @@ def wife_gag():
 
     settings = get_settings()
 
-    # Wife has its own independent password.
     if (
         settings["wife_password"] is not None
         and not is_wife_authenticated()
@@ -612,7 +658,14 @@ def wife_api_status():
 def wife_password_set():
     data = request.get_json() or {}
 
+    username = data.get("username", "")
     password = data.get("password")
+
+    if username != "wife":
+        return jsonify({
+            "success": False,
+            "error": "Invalid username"
+        }), 400
 
     if not password:
         return jsonify({
@@ -630,11 +683,11 @@ def wife_password_set():
 
     set_wife_password(password)
 
-    # Automatically authenticate after creating the password.
     session["wife_authenticated"] = True
 
     return jsonify({
         "success": True,
+        "username": "wife",
         "password_set": True,
         "authenticated": True
     })
@@ -644,14 +697,22 @@ def wife_password_set():
 def wife_password_unlock():
     data = request.get_json() or {}
 
+    username = data.get("username", "")
     password = data.get("password", "")
     settings = get_settings()
+
+    if username != "wife":
+        return jsonify({
+            "success": False,
+            "error": "Incorrect username or password"
+        }), 401
 
     if settings["wife_password"] is None:
         session["wife_authenticated"] = True
 
         return jsonify({
             "success": True,
+            "username": "wife",
             "password_set": False,
             "authenticated": True
         })
@@ -659,13 +720,14 @@ def wife_password_unlock():
     if password != settings["wife_password"]:
         return jsonify({
             "success": False,
-            "error": "Incorrect password"
+            "error": "Incorrect username or password"
         }), 401
 
     session["wife_authenticated"] = True
 
     return jsonify({
         "success": True,
+        "username": "wife",
         "password_set": True,
         "authenticated": True
     })
@@ -674,6 +736,9 @@ def wife_password_unlock():
 @app.route("/wife/password/remove", methods=["POST"])
 def wife_password_remove():
     data = request.get_json() or {}
+
+    username = data.get("username", "")
+    password = data.get("password", "")
 
     settings = get_settings()
 
@@ -690,12 +755,16 @@ def wife_password_remove():
             "error": "password_required"
         }), 403
 
-    password = data.get("password", "")
+    if username != "wife":
+        return jsonify({
+            "success": False,
+            "error": "Incorrect username or password"
+        }), 401
 
     if password != settings["wife_password"]:
         return jsonify({
             "success": False,
-            "error": "Incorrect password"
+            "error": "Incorrect username or password"
         }), 401
 
     remove_wife_password()
