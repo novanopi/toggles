@@ -2,6 +2,8 @@ import os
 
 from flask import Flask, render_template, request, jsonify, session
 from supabase import create_client, Client
+from werkzeug.security import generate_password_hash, check_password_hash
+
 
 
 app = Flask(__name__)
@@ -9,6 +11,13 @@ app = Flask(__name__)
 # Persistent Flask session signing key.
 # Set this in Render environment variables.
 app.secret_key = os.environ["FLASK_SECRET_KEY"]
+
+app.config.update(
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+)
+
 
 # Supabase configuration.
 SUPABASE_URL = os.environ["SUPABASE_URL"]
@@ -80,10 +89,11 @@ def set_gagged(gagged):
 
 
 def set_password(password):
+    password_hash = generate_password_hash(password)
     (
         supabase
         .table("settings")
-        .update({"password": password})
+        .update({"password": password_hash})
         .eq("id", 1)
         .execute()
     )
@@ -225,7 +235,7 @@ def password_unlock():
             "authenticated": True
         })
 
-    if password != settings["password"]:
+    if not check_password_hash(settings["password"], password):
         return jsonify({
             "success": False,
             "error": "Incorrect username or password"
@@ -238,6 +248,7 @@ def password_unlock():
         "username": "main",
         "authenticated": True
     })
+
 
 
 @app.route("/password/remove", methods=["POST"])
@@ -265,7 +276,7 @@ def password_remove():
             "error": "Incorrect username or password"
         }), 401
 
-    if password != settings["password"]:
+    if not check_password_hash(settings["password"], password):
         return jsonify({
             "success": False,
             "error": "Incorrect username or password"
@@ -310,10 +321,11 @@ def set_lily_gagged(gagged):
 
 
 def set_lily_password(password):
+    password_hash = generate_password_hash(password)
     (
         supabase
         .table("settings")
-        .update({"lily_password": password})
+        .update({"lily_password": password_hash})
         .eq("id", 1)
         .execute()
     )
@@ -420,6 +432,7 @@ def lily_password_set():
 
 
 @app.route("/lily/password/unlock", methods=["POST"])
+@app.route("/lily/password/unlock", methods=["POST"])
 def lily_password_unlock():
     data = request.get_json() or {}
 
@@ -443,7 +456,10 @@ def lily_password_unlock():
             "authenticated": True
         })
 
-    if password != settings["lily_password"]:
+    if not check_password_hash(
+        settings["lily_password"],
+        password
+    ):
         return jsonify({
             "success": False,
             "error": "Incorrect username or password"
@@ -457,6 +473,7 @@ def lily_password_unlock():
         "password_set": True,
         "authenticated": True
     })
+
 
 
 @app.route("/lily/password/remove", methods=["POST"])
@@ -487,7 +504,7 @@ def lily_password_remove():
             "error": "Incorrect username or password"
         }), 401
 
-    if password != settings["lily_password"]:
+    if not check_password_hash(settings["lily_password"], password):
         return jsonify({
             "success": False,
             "error": "Incorrect username or password"
@@ -533,13 +550,15 @@ def set_wife_gagged(gagged):
 
 
 def set_wife_password(password):
+    password_hash = generate_password_hash(password)
     (
         supabase
         .table("settings")
-        .update({"wife_password": password})
+        .update({"wife_password": password_hash})
         .eq("id", 1)
         .execute()
     )
+
 
 
 def remove_wife_password():
@@ -666,13 +685,17 @@ def wife_password_unlock():
             "authenticated": True
         })
 
-    if password != settings["wife_password"]:
+    if not check_password_hash(
+        settings["wife_password"],
+        password
+    ):
         return jsonify({
             "success": False,
             "error": "Incorrect username or password"
         }), 401
 
     session["wife_authenticated"] = True
+
 
     return jsonify({
         "success": True,
@@ -710,7 +733,7 @@ def wife_password_remove():
             "error": "Incorrect username or password"
         }), 401
 
-    if password != settings["wife_password"]:
+    if not check_password_hash(settings["wife_password"], password):
         return jsonify({
             "success": False,
             "error": "Incorrect username or password"
