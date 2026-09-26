@@ -1,114 +1,54 @@
+import os
+
 from flask import Flask, render_template, request, jsonify, session
-import sqlite3
+from supabase import create_client, Client
+
 
 app = Flask(__name__)
 
-DATABASE = "toggle.db"
+# Persistent Flask session signing key.
+# Set this in Render environment variables.
+app.secret_key = os.environ["FLASK_SECRET_KEY"]
 
-# Used to sign the Flask session cookie.
-# Change this to any random string you want.
-app.secret_key = "change-this-to-a-random-secret-key"
+# Supabase configuration.
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_SECRET_KEY = os.environ["SUPABASE_SECRET_KEY"]
 
-
-def init_db():
-    with sqlite3.connect(DATABASE) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS settings (
-                id INTEGER PRIMARY KEY,
-                enabled INTEGER NOT NULL,
-                password TEXT,
-                gagged INTEGER NOT NULL DEFAULT 0,
-                lily_gagged INTEGER NOT NULL DEFAULT 0,
-                lily_password TEXT,
-                wife_gagged INTEGER NOT NULL DEFAULT 0,
-                wife_password TEXT
-            )
-        """)
-
-        columns = [
-            row[1]
-            for row in conn.execute(
-                "PRAGMA table_info(settings)"
-            ).fetchall()
-        ]
-
-        # Existing database migrations
-        if "password" not in columns:
-            conn.execute(
-                "ALTER TABLE settings ADD COLUMN password TEXT"
-            )
-
-        if "gagged" not in columns:
-            conn.execute(
-                "ALTER TABLE settings ADD COLUMN gagged INTEGER NOT NULL DEFAULT 0"
-            )
-
-        # Lily database fields
-        if "lily_gagged" not in columns:
-            conn.execute(
-                "ALTER TABLE settings ADD COLUMN lily_gagged INTEGER NOT NULL DEFAULT 0"
-            )
-
-        if "lily_password" not in columns:
-            conn.execute(
-                "ALTER TABLE settings ADD COLUMN lily_password TEXT"
-            )
-
-        # Wife database fields
-        if "wife_gagged" not in columns:
-            conn.execute(
-                "ALTER TABLE settings ADD COLUMN wife_gagged INTEGER NOT NULL DEFAULT 0"
-            )
-
-        if "wife_password" not in columns:
-            conn.execute(
-                "ALTER TABLE settings ADD COLUMN wife_password TEXT"
-            )
-
-        conn.execute("""
-            INSERT OR IGNORE INTO settings (
-                id,
-                enabled,
-                password,
-                gagged,
-                lily_gagged,
-                lily_password,
-                wife_gagged,
-                wife_password
-            )
-            VALUES (1, 0, NULL, 0, 0, NULL, 0, NULL)
-        """)
-
-        conn.commit()
-
-
-init_db()
+supabase: Client = create_client(
+    SUPABASE_URL,
+    SUPABASE_SECRET_KEY
+)
 
 
 def get_settings():
-    with sqlite3.connect(DATABASE) as conn:
-        row = conn.execute("""
-            SELECT
-                enabled,
-                password,
-                gagged,
-                lily_gagged,
-                lily_password,
-                wife_gagged,
-                wife_password
-            FROM settings
-            WHERE id = 1
-        """).fetchone()
+    response = (
+        supabase
+        .table("settings")
+        .select("""
+            enabled,
+            password,
+            gagged,
+            lily_gagged,
+            lily_password,
+            wife_gagged,
+            wife_password
+        """)
+        .eq("id", 1)
+        .single()
+        .execute()
+    )
 
-        return {
-            "enabled": bool(row[0]),
-            "password": row[1],
-            "gagged": bool(row[2]),
-            "lily_gagged": bool(row[3]),
-            "lily_password": row[4],
-            "wife_gagged": bool(row[5]),
-            "wife_password": row[6]
-        }
+    row = response.data
+
+    return {
+        "enabled": bool(row["enabled"]),
+        "password": row["password"],
+        "gagged": bool(row["gagged"]),
+        "lily_gagged": bool(row["lily_gagged"]),
+        "lily_password": row["lily_password"],
+        "wife_gagged": bool(row["wife_gagged"]),
+        "wife_password": row["wife_password"]
+    }
 
 
 # ============================================================
@@ -120,42 +60,43 @@ def get_state():
 
 
 def set_state(enabled):
-    with sqlite3.connect(DATABASE) as conn:
-        conn.execute(
-            "UPDATE settings SET enabled = ? WHERE id = 1",
-            (1 if enabled else 0,)
-        )
-        conn.commit()
-
-
-def get_gagged():
-    return get_settings()["gagged"]
+    (
+        supabase
+        .table("settings")
+        .update({"enabled": bool(enabled)})
+        .eq("id", 1)
+        .execute()
+    )
 
 
 def set_gagged(gagged):
-    with sqlite3.connect(DATABASE) as conn:
-        conn.execute(
-            "UPDATE settings SET gagged = ? WHERE id = 1",
-            (1 if gagged else 0,)
-        )
-        conn.commit()
+    (
+        supabase
+        .table("settings")
+        .update({"gagged": bool(gagged)})
+        .eq("id", 1)
+        .execute()
+    )
 
 
 def set_password(password):
-    with sqlite3.connect(DATABASE) as conn:
-        conn.execute(
-            "UPDATE settings SET password = ? WHERE id = 1",
-            (password,)
-        )
-        conn.commit()
+    (
+        supabase
+        .table("settings")
+        .update({"password": password})
+        .eq("id", 1)
+        .execute()
+    )
 
 
 def remove_password():
-    with sqlite3.connect(DATABASE) as conn:
-        conn.execute(
-            "UPDATE settings SET password = NULL WHERE id = 1"
-        )
-        conn.commit()
+    (
+        supabase
+        .table("settings")
+        .update({"password": None})
+        .eq("id", 1)
+        .execute()
+    )
 
 
 def is_authenticated():
@@ -359,29 +300,33 @@ def get_lily_gagged():
 
 
 def set_lily_gagged(gagged):
-    with sqlite3.connect(DATABASE) as conn:
-        conn.execute(
-            "UPDATE settings SET lily_gagged = ? WHERE id = 1",
-            (1 if gagged else 0,)
-        )
-        conn.commit()
+    (
+        supabase
+        .table("settings")
+        .update({"lily_gagged": bool(gagged)})
+        .eq("id", 1)
+        .execute()
+    )
 
 
 def set_lily_password(password):
-    with sqlite3.connect(DATABASE) as conn:
-        conn.execute(
-            "UPDATE settings SET lily_password = ? WHERE id = 1",
-            (password,)
-        )
-        conn.commit()
+    (
+        supabase
+        .table("settings")
+        .update({"lily_password": password})
+        .eq("id", 1)
+        .execute()
+    )
 
 
 def remove_lily_password():
-    with sqlite3.connect(DATABASE) as conn:
-        conn.execute(
-            "UPDATE settings SET lily_password = NULL WHERE id = 1"
-        )
-        conn.commit()
+    (
+        supabase
+        .table("settings")
+        .update({"lily_password": None})
+        .eq("id", 1)
+        .execute()
+    )
 
 
 def is_lily_authenticated():
@@ -578,29 +523,33 @@ def get_wife_gagged():
 
 
 def set_wife_gagged(gagged):
-    with sqlite3.connect(DATABASE) as conn:
-        conn.execute(
-            "UPDATE settings SET wife_gagged = ? WHERE id = 1",
-            (1 if gagged else 0,)
-        )
-        conn.commit()
+    (
+        supabase
+        .table("settings")
+        .update({"wife_gagged": bool(gagged)})
+        .eq("id", 1)
+        .execute()
+    )
 
 
 def set_wife_password(password):
-    with sqlite3.connect(DATABASE) as conn:
-        conn.execute(
-            "UPDATE settings SET wife_password = ? WHERE id = 1",
-            (password,)
-        )
-        conn.commit()
+    (
+        supabase
+        .table("settings")
+        .update({"wife_password": password})
+        .eq("id", 1)
+        .execute()
+    )
 
 
 def remove_wife_password():
-    with sqlite3.connect(DATABASE) as conn:
-        conn.execute(
-            "UPDATE settings SET wife_password = NULL WHERE id = 1"
-        )
-        conn.commit()
+    (
+        supabase
+        .table("settings")
+        .update({"wife_password": None})
+        .eq("id", 1)
+        .execute()
+    )
 
 
 def is_wife_authenticated():
