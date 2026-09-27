@@ -1,22 +1,15 @@
 import os
-import re
 
-from flask import (
-    Flask,
-    render_template,
-    request,
-    jsonify,
-    session,
-    redirect,
-    url_for,
-    abort,
-)
+from flask import Flask, render_template, request, jsonify, session
 from supabase import create_client, Client
 from werkzeug.security import generate_password_hash, check_password_hash
 
 
+
 app = Flask(__name__)
 
+# Persistent Flask session signing key.
+# Set this in Render environment variables.
 app.secret_key = os.environ["FLASK_SECRET_KEY"]
 
 app.config.update(
@@ -25,353 +18,755 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
 )
 
+
+# Supabase configuration.
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_SECRET_KEY = os.environ["SUPABASE_SECRET_KEY"]
+
 supabase: Client = create_client(
-    os.environ["SUPABASE_URL"],
-    os.environ["SUPABASE_SECRET_KEY"],
+    SUPABASE_URL,
+    SUPABASE_SECRET_KEY
 )
 
 
-USERNAME_RE = re.compile(r"^[a-z0-9_-]{2,50}$")
-
-RESERVED_USERNAMES = {
-    "api",
-    "static",
-    "password",
-    "toggle",
-    "gag",
-    "favicon.ico",
-}
-
-
-def normalize_username(username):
-    return (username or "").strip().lower()
-
-
-def valid_username(username):
-    username = normalize_username(username)
-
-    if username in RESERVED_USERNAMES:
-        return False
-
-    return bool(USERNAME_RE.fullmatch(username))
-
-
-def get_account(username):
-    username = normalize_username(username)
-
-    if not valid_username(username):
-        return None
-
+def get_settings():
     response = (
         supabase
-        .table("accounts")
-        .select("*")
-        .eq("username", username)
-        .maybe_single()
+        .table("settings")
+        .select("""
+            enabled,
+            password,
+            gagged,
+            lily_gagged,
+            lily_password,
+            wife_gagged,
+            wife_password
+        """)
+        .eq("id", 1)
+        .single()
         .execute()
     )
 
-    return response.data
-
-
-def update_account(username, values):
-    username = normalize_username(username)
-
-    if not valid_username(username):
-        return
-
-    (
-        supabase
-        .table("accounts")
-        .update(values)
-        .eq("username", username)
-        .execute()
-    )
-
-
-def auth_key(username):
-    return f"authenticated_{normalize_username(username)}"
-
-
-def is_authenticated(username):
-    return bool(session.get(auth_key(username), False))
-
-
-def account_payload(username, account=None):
-    account = account or get_account(username)
-
-    if not account:
-        return None
+    row = response.data
 
     return {
-        "username": account["username"],
-        "title": account.get("title") or account["username"].capitalize(),
-        "enabled": bool(account.get("enabled", False)),
-        "gagged": bool(account.get("gagged", False)),
-        "show_toggle": bool(account.get("show_toggle", False)),
-        "password_set": account.get("password") is not None,
-        "authenticated": is_authenticated(username),
+        "enabled": bool(row["enabled"]),
+        "password": row["password"],
+        "gagged": bool(row["gagged"]),
+        "lily_gagged": bool(row["lily_gagged"]),
+        "lily_password": row["lily_password"],
+        "wife_gagged": bool(row["wife_gagged"]),
+        "wife_password": row["wife_password"]
     }
 
 
-def check_unlocked(account):
-    if account.get("password") is None:
-        return True
+# ============================================================
+# ORIGINAL WEBSITE
+# ============================================================
 
-    return is_authenticated(account["username"])
+def get_state():
+    return get_settings()["enabled"]
 
 
-def payload_username_matches(payload, username):
-    requested_username = normalize_username(payload.get("username", ""))
+def set_state(enabled):
+    (
+        supabase
+        .table("settings")
+        .update({"enabled": bool(enabled)})
+        .eq("id", 1)
+        .execute()
+    )
 
-    if not requested_username:
-        return True
 
-    return requested_username == normalize_username(username)
+def set_gagged(gagged):
+    (
+        supabase
+        .table("settings")
+        .update({"gagged": bool(gagged)})
+        .eq("id", 1)
+        .execute()
+    )
+
+
+def set_password(password):
+    password_hash = generate_password_hash(password)
+    (
+        supabase
+        .table("settings")
+        .update({"password": password_hash})
+        .eq("id", 1)
+        .execute()
+    )
+
+
+def remove_password():
+    (
+        supabase
+        .table("settings")
+        .update({"password": None})
+        .eq("id", 1)
+        .execute()
+    )
+
+
+def is_authenticated():
+    return session.get("toggle_authenticated", False)
 
 
 @app.route("/")
-def home():
-    return redirect(url_for("account_page", username="main"))
-
-
-@app.route("/<username>")
-def account_page(username):
-    account = get_account(username)
-
-    if not account:
-        abort(404)
-
-    data = account_payload(username, account)
+def index():
+    settings = get_settings()
 
     return render_template(
-        "account.html",
-        account=data,
+        "index.html",
+        enabled=settings["enabled"],
+        gagged=settings["gagged"],
+        password_set=settings["password"] is not None,
+        authenticated=is_authenticated()
     )
 
 
-@app.route("/api/<username>/status")
-def api_status(username):
-    data = account_payload(username)
+@app.route("/toggle", methods=["POST"])
+def toggle():
+    data = request.get_json() or {}
 
-    if data is None:
-        return jsonify({"error": "not_found"}), 404
+    settings = get_settings()
 
-    return jsonify(data)
-
-
-@app.route("/api/<username>/toggle", methods=["POST"])
-def api_toggle(username):
-    account = get_account(username)
-
-    if not account:
-        return jsonify({"error": "not_found"}), 404
-
-    if not check_unlocked(account):
-        return jsonify({"error": "password_required"}), 403
-
-    payload = request.get_json(silent=True) or {}
-
-    enabled = bool(
-        payload.get(
-            "enabled",
-            not bool(account.get("enabled", False)),
-        )
-    )
-
-    update_account(username, {"enabled": enabled})
-
-    return jsonify({
-        "success": True,
-        "username": normalize_username(username),
-        "enabled": enabled,
-    })
-
-
-@app.route("/api/<username>/gag", methods=["POST"])
-def api_gag(username):
-    account = get_account(username)
-
-    if not account:
-        return jsonify({"error": "not_found"}), 404
-
-    if not check_unlocked(account):
-        return jsonify({"error": "password_required"}), 403
-
-    payload = request.get_json(silent=True) or {}
-
-    gagged = bool(
-        payload.get(
-            "gagged",
-            not bool(account.get("gagged", False)),
-        )
-    )
-
-    update_account(username, {"gagged": gagged})
-
-    return jsonify({
-        "success": True,
-        "username": normalize_username(username),
-        "gagged": gagged,
-    })
-
-
-@app.route("/api/<username>/password/set", methods=["POST"])
-def api_password_set(username):
-    account = get_account(username)
-
-    if not account:
-        return jsonify({"error": "not_found"}), 404
-
-    payload = request.get_json(silent=True) or {}
-
-    if not payload_username_matches(payload, username):
+    if settings["password"] is not None and not is_authenticated():
         return jsonify({
-            "success": False,
-            "error": "Invalid username",
+            "error": "password_required"
+        }), 403
+
+    enabled = bool(data.get("enabled", False))
+    set_state(enabled)
+
+    return jsonify({
+        "is_forced_ctrlem": get_state()
+    })
+
+
+@app.route("/gag", methods=["POST"])
+def gag():
+    data = request.get_json() or {}
+
+    settings = get_settings()
+
+    if settings["password"] is not None and not is_authenticated():
+        return jsonify({
+            "error": "password_required"
+        }), 403
+
+    gagged = bool(data.get("gagged", False))
+    set_gagged(gagged)
+
+    return jsonify({
+        "is_gagged": get_gagged()
+    })
+
+
+@app.route("/api/status", methods=["GET"])
+def api_status():
+    settings = get_settings()
+
+    return jsonify({
+        "is_forced_ctrlem": settings["enabled"],
+        "is_gagged": settings["gagged"],
+        "password_set": settings["password"] is not None,
+        "authenticated": is_authenticated()
+    })
+
+
+@app.route("/password/set", methods=["POST"])
+def password_set():
+    data = request.get_json() or {}
+
+    username = data.get("username", "")
+    password = data.get("password")
+
+    if username != "main":
+        return jsonify({
+            "error": "Invalid username"
         }), 400
 
-    password = payload.get("password")
+    if not password:
+        return jsonify({
+            "error": "Password cannot be empty"
+        }), 400
+
+    settings = get_settings()
+
+    if settings["password"] is not None:
+        return jsonify({
+            "error": "A password is already set"
+        }), 403
+
+    set_password(password)
+
+    session["toggle_authenticated"] = True
+
+    return jsonify({
+        "success": True,
+        "username": "main",
+        "password_set": True,
+        "authenticated": True
+    })
+
+
+@app.route("/password/unlock", methods=["POST"])
+def password_unlock():
+    data = request.get_json() or {}
+
+    username = data.get("username", "")
+    password = data.get("password", "")
+    settings = get_settings()
+
+    if username != "main":
+        return jsonify({
+            "success": False,
+            "error": "Incorrect username or password"
+        }), 401
+
+    if settings["password"] is None:
+        session["toggle_authenticated"] = True
+
+        return jsonify({
+            "success": True,
+            "username": "main",
+            "authenticated": True
+        })
+
+    if not check_password_hash(settings["password"], password):
+        return jsonify({
+            "success": False,
+            "error": "Incorrect username or password"
+        }), 401
+
+    session["toggle_authenticated"] = True
+
+    return jsonify({
+        "success": True,
+        "username": "main",
+        "authenticated": True
+    })
+
+
+
+@app.route("/password/remove", methods=["POST"])
+def password_remove():
+    data = request.get_json() or {}
+
+    username = data.get("username", "")
+    password = data.get("password", "")
+
+    settings = get_settings()
+
+    if settings["password"] is None:
+        return jsonify({
+            "success": True
+        })
+
+    if not is_authenticated():
+        return jsonify({
+            "error": "password_required"
+        }), 403
+
+    if username != "main":
+        return jsonify({
+            "success": False,
+            "error": "Incorrect username or password"
+        }), 401
+
+    if not check_password_hash(settings["password"], password):
+        return jsonify({
+            "success": False,
+            "error": "Incorrect username or password"
+        }), 401
+
+    remove_password()
+
+    session["toggle_authenticated"] = False
+
+    return jsonify({
+        "success": True,
+        "password_set": False,
+        "authenticated": False
+    })
+
+
+@app.route("/password/logout", methods=["POST"])
+def password_logout():
+    session["toggle_authenticated"] = False
+
+    return jsonify({
+        "success": True
+    })
+
+
+# ============================================================
+# LILY WEBSITE
+# ============================================================
+
+def get_lily_gagged():
+    return get_settings()["lily_gagged"]
+
+
+def set_lily_gagged(gagged):
+    (
+        supabase
+        .table("settings")
+        .update({"lily_gagged": bool(gagged)})
+        .eq("id", 1)
+        .execute()
+    )
+
+
+def set_lily_password(password):
+    password_hash = generate_password_hash(password)
+    (
+        supabase
+        .table("settings")
+        .update({"lily_password": password_hash})
+        .eq("id", 1)
+        .execute()
+    )
+
+
+def remove_lily_password():
+    (
+        supabase
+        .table("settings")
+        .update({"lily_password": None})
+        .eq("id", 1)
+        .execute()
+    )
+
+
+def is_lily_authenticated():
+    return session.get("lily_authenticated", False)
+
+
+@app.route("/lily")
+def lily():
+    settings = get_settings()
+
+    return render_template(
+        "lily.html",
+        gagged=settings["lily_gagged"],
+        password_set=settings["lily_password"] is not None,
+        authenticated=is_lily_authenticated()
+    )
+
+
+@app.route("/lily/gag", methods=["POST"])
+def lily_gag():
+    data = request.get_json() or {}
+
+    settings = get_settings()
+
+    if (
+        settings["lily_password"] is not None
+        and not is_lily_authenticated()
+    ):
+        return jsonify({
+            "error": "password_required"
+        }), 403
+
+    gagged = bool(data.get("gagged", False))
+
+    set_lily_gagged(gagged)
+
+    return jsonify({
+        "success": True,
+        "is_gagged": get_lily_gagged()
+    })
+
+
+@app.route("/api/lily/status", methods=["GET"])
+def lily_api_status():
+    settings = get_settings()
+
+    return jsonify({
+        "is_gagged": settings["lily_gagged"],
+        "password_set": settings["lily_password"] is not None,
+        "authenticated": is_lily_authenticated()
+    })
+
+
+@app.route("/lily/password/set", methods=["POST"])
+def lily_password_set():
+    data = request.get_json() or {}
+
+    username = data.get("username", "")
+    password = data.get("password")
+
+    if username != "lily":
+        return jsonify({
+            "success": False,
+            "error": "Invalid username"
+        }), 400
 
     if not password:
         return jsonify({
             "success": False,
-            "error": "Password cannot be empty",
+            "error": "Password cannot be empty"
         }), 400
 
-    if account.get("password") is not None:
+    settings = get_settings()
+
+    if settings["lily_password"] is not None:
         return jsonify({
             "success": False,
-            "error": "A password is already set",
+            "error": "A password is already set"
         }), 403
 
-    update_account(username, {
-        "password": generate_password_hash(password),
-    })
+    set_lily_password(password)
 
-    session[auth_key(username)] = True
+    session["lily_authenticated"] = True
 
     return jsonify({
         "success": True,
-        "username": normalize_username(username),
+        "username": "lily",
         "password_set": True,
-        "authenticated": True,
+        "authenticated": True
     })
 
 
-@app.route("/api/<username>/password/unlock", methods=["POST"])
-def api_password_unlock(username):
-    account = get_account(username)
+@app.route("/lily/password/unlock", methods=["POST"])
+@app.route("/lily/password/unlock", methods=["POST"])
+def lily_password_unlock():
+    data = request.get_json() or {}
 
-    if not account:
-        return jsonify({"error": "not_found"}), 404
+    username = data.get("username", "")
+    password = data.get("password", "")
+    settings = get_settings()
 
-    payload = request.get_json(silent=True) or {}
-
-    if not payload_username_matches(payload, username):
+    if username != "lily":
         return jsonify({
             "success": False,
-            "error": "Incorrect username or password",
+            "error": "Incorrect username or password"
         }), 401
 
-    password = payload.get("password", "")
-
-    if account.get("password") is None:
-        session[auth_key(username)] = True
+    if settings["lily_password"] is None:
+        session["lily_authenticated"] = True
 
         return jsonify({
             "success": True,
-            "username": normalize_username(username),
+            "username": "lily",
             "password_set": False,
-            "authenticated": True,
+            "authenticated": True
         })
 
-    if not check_password_hash(account["password"], password):
+    if not check_password_hash(
+        settings["lily_password"],
+        password
+    ):
         return jsonify({
             "success": False,
-            "error": "Incorrect username or password",
+            "error": "Incorrect username or password"
         }), 401
 
-    session[auth_key(username)] = True
+    session["lily_authenticated"] = True
 
     return jsonify({
         "success": True,
-        "username": normalize_username(username),
+        "username": "lily",
         "password_set": True,
-        "authenticated": True,
+        "authenticated": True
     })
 
 
-@app.route("/api/<username>/password/remove", methods=["POST"])
-def api_password_remove(username):
-    account = get_account(username)
 
-    if not account:
-        return jsonify({"error": "not_found"}), 404
+@app.route("/lily/password/remove", methods=["POST"])
+def lily_password_remove():
+    data = request.get_json() or {}
 
-    if account.get("password") is None:
-        session[auth_key(username)] = False
+    username = data.get("username", "")
+    password = data.get("password", "")
 
+    settings = get_settings()
+
+    if settings["lily_password"] is None:
         return jsonify({
             "success": True,
-            "username": normalize_username(username),
             "password_set": False,
-            "authenticated": False,
+            "authenticated": False
         })
 
-    if not is_authenticated(username):
+    if not is_lily_authenticated():
         return jsonify({
             "success": False,
-            "error": "password_required",
+            "error": "password_required"
         }), 403
 
-    payload = request.get_json(silent=True) or {}
-
-    if not payload_username_matches(payload, username):
+    if username != "lily":
         return jsonify({
             "success": False,
-            "error": "Incorrect username or password",
+            "error": "Incorrect username or password"
         }), 401
 
-    password = payload.get("password", "")
-
-    if password and not check_password_hash(account["password"], password):
+    if not check_password_hash(settings["lily_password"], password):
         return jsonify({
             "success": False,
-            "error": "Incorrect username or password",
+            "error": "Incorrect username or password"
         }), 401
 
-    update_account(username, {"password": None})
+    remove_lily_password()
 
-    session[auth_key(username)] = False
+    session["lily_authenticated"] = False
 
     return jsonify({
         "success": True,
-        "username": normalize_username(username),
         "password_set": False,
-        "authenticated": False,
+        "authenticated": False
     })
 
 
-@app.route("/api/<username>/password/logout", methods=["POST"])
-def api_password_logout(username):
-    account = get_account(username)
-
-    if not account:
-        return jsonify({"error": "not_found"}), 404
-
-    session[auth_key(username)] = False
+@app.route("/lily/password/logout", methods=["POST"])
+def lily_password_logout():
+    session["lily_authenticated"] = False
 
     return jsonify({
         "success": True,
-        "username": normalize_username(username),
-        "authenticated": False,
+        "authenticated": False
     })
 
+
+# ============================================================
+# WIFE WEBSITE
+# ============================================================
+
+def get_wife_gagged():
+    return get_settings()["wife_gagged"]
+
+
+def set_wife_gagged(gagged):
+    (
+        supabase
+        .table("settings")
+        .update({"wife_gagged": bool(gagged)})
+        .eq("id", 1)
+        .execute()
+    )
+
+
+def set_wife_password(password):
+    password_hash = generate_password_hash(password)
+    (
+        supabase
+        .table("settings")
+        .update({"wife_password": password_hash})
+        .eq("id", 1)
+        .execute()
+    )
+
+
+
+def remove_wife_password():
+    (
+        supabase
+        .table("settings")
+        .update({"wife_password": None})
+        .eq("id", 1)
+        .execute()
+    )
+
+
+def is_wife_authenticated():
+    return session.get("wife_authenticated", False)
+
+
+@app.route("/wife")
+def wife():
+    settings = get_settings()
+
+    return render_template(
+        "wife.html",
+        gagged=settings["wife_gagged"],
+        password_set=settings["wife_password"] is not None,
+        authenticated=is_wife_authenticated()
+    )
+
+
+@app.route("/wife/gag", methods=["POST"])
+def wife_gag():
+    data = request.get_json() or {}
+
+    settings = get_settings()
+
+    if (
+        settings["wife_password"] is not None
+        and not is_wife_authenticated()
+    ):
+        return jsonify({
+            "error": "password_required"
+        }), 403
+
+    gagged = bool(data.get("gagged", False))
+
+    set_wife_gagged(gagged)
+
+    return jsonify({
+        "success": True,
+        "is_gagged": get_wife_gagged()
+    })
+
+
+@app.route("/api/wife/status", methods=["GET"])
+def wife_api_status():
+    settings = get_settings()
+
+    return jsonify({
+        "is_gagged": settings["wife_gagged"],
+        "password_set": settings["wife_password"] is not None,
+        "authenticated": is_wife_authenticated()
+    })
+
+
+@app.route("/wife/password/set", methods=["POST"])
+def wife_password_set():
+    data = request.get_json() or {}
+
+    username = data.get("username", "")
+    password = data.get("password")
+
+    if username != "wife":
+        return jsonify({
+            "success": False,
+            "error": "Invalid username"
+        }), 400
+
+    if not password:
+        return jsonify({
+            "success": False,
+            "error": "Password cannot be empty"
+        }), 400
+
+    settings = get_settings()
+
+    if settings["wife_password"] is not None:
+        return jsonify({
+            "success": False,
+            "error": "A password is already set"
+        }), 403
+
+    set_wife_password(password)
+
+    session["wife_authenticated"] = True
+
+    return jsonify({
+        "success": True,
+        "username": "wife",
+        "password_set": True,
+        "authenticated": True
+    })
+
+
+@app.route("/wife/password/unlock", methods=["POST"])
+def wife_password_unlock():
+    data = request.get_json() or {}
+
+    username = data.get("username", "")
+    password = data.get("password", "")
+    settings = get_settings()
+
+    if username != "wife":
+        return jsonify({
+            "success": False,
+            "error": "Incorrect username or password"
+        }), 401
+
+    if settings["wife_password"] is None:
+        session["wife_authenticated"] = True
+
+        return jsonify({
+            "success": True,
+            "username": "wife",
+            "password_set": False,
+            "authenticated": True
+        })
+
+    if not check_password_hash(
+        settings["wife_password"],
+        password
+    ):
+        return jsonify({
+            "success": False,
+            "error": "Incorrect username or password"
+        }), 401
+
+    session["wife_authenticated"] = True
+
+
+    return jsonify({
+        "success": True,
+        "username": "wife",
+        "password_set": True,
+        "authenticated": True
+    })
+
+
+@app.route("/wife/password/remove", methods=["POST"])
+def wife_password_remove():
+    data = request.get_json() or {}
+
+    username = data.get("username", "")
+    password = data.get("password", "")
+
+    settings = get_settings()
+
+    if settings["wife_password"] is None:
+        return jsonify({
+            "success": True,
+            "password_set": False,
+            "authenticated": False
+        })
+
+    if not is_wife_authenticated():
+        return jsonify({
+            "success": False,
+            "error": "password_required"
+        }), 403
+
+    if username != "wife":
+        return jsonify({
+            "success": False,
+            "error": "Incorrect username or password"
+        }), 401
+
+    if not check_password_hash(settings["wife_password"], password):
+        return jsonify({
+            "success": False,
+            "error": "Incorrect username or password"
+        }), 401
+
+    remove_wife_password()
+
+    session["wife_authenticated"] = False
+
+    return jsonify({
+        "success": True,
+        "password_set": False,
+        "authenticated": False
+    })
+
+
+@app.route("/wife/password/logout", methods=["POST"])
+def wife_password_logout():
+    session["wife_authenticated"] = False
+
+    return jsonify({
+        "success": True,
+        "authenticated": False
+    })
+
+
+# ============================================================
+# START SERVER
+# ============================================================
 
 if __name__ == "__main__":
     app.run(
         host="0.0.0.0",
-        port=int(os.environ.get("PORT", 5000)),
-        debug=False,
+        port=5000,
+        debug=False
     )
